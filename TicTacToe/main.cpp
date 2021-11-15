@@ -1,6 +1,11 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // TODO:: #include any needed files
 ///////////////////////////////////////////////////////////////////////////////////
+#include <mutex>
+#include <random>
+
+
+
 
 // Include file and line numbers for memory leak detection for visual studio in debug mode
 #if defined _MSC_VER && defined _DEBUG
@@ -10,6 +15,7 @@
 #else
 	#define ENABLE_LEAK_DETECTION()
 #endif
+
 
 class UniformRandInt
 {
@@ -127,6 +133,8 @@ struct Player
 	struct PlayerPool *playerPool;
 	// random number generator for this thread
 	UniformRandInt myRand;
+
+	
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -146,11 +154,18 @@ struct GamePool
 //   logic.
 ///////////////////////////////////////////////////////////////////////////////////
 struct PlayerPool
-{ 
+{
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: You will need to add variables here to keep track of the total number of
 	//   player threads in a thread-safe manner and implement the starting gun logic.
 	///////////////////////////////////////////////////////////////////////////////////
+	std::mutex muPlayercount;
+	std::condition_variable cvPlayercount;
+	std::mutex muStartingGun;
+	std::condition_variable cvStartingGun;
+	std::atomic<int> count;
+	std::atomic<int> startingGun;
+	
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -534,7 +549,7 @@ void TryToPlayEachGame(Player *currentPlayer)
 void PlayerThreadEntrypoint(Player *currentPlayer)
 {
 	printf("Player %d waiting on starting gun\n", currentPlayer->id);
-
+	
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Let main know there's one more player thread running then wait for a
 	//   notification from main via the condition variable you created in the PlayerPool
@@ -553,6 +568,18 @@ void PlayerThreadEntrypoint(Player *currentPlayer)
 	//     then you probably let main 'fire' the gun (via notify) before you were waiting on it.
 	//
 	///////////////////////////////////////////////////////////////////////////////////
+	if (currentPlayer->playerPool->muPlayercount.try_lock())
+	{
+		currentPlayer->playerPool->muPlayercount.lock();
+		currentPlayer->playerPool->count = currentPlayer->playerPool->count + 1;
+		currentPlayer->playerPool->muPlayercount.unlock();
+	}
+
+
+
+
+	std::unique_lock<std::mutex> StartLock(currentPlayer->playerPool->muStartingGun);
+	currentPlayer->playerPool->cvStartingGun.wait(StartLock, [&]() {return currentPlayer->playerPool->startingGun == 1; });
 
 	// Attempt to play each game, all of the game logic will occur in this function
 	printf("Player %d running\n", currentPlayer->id);
@@ -563,6 +590,12 @@ void PlayerThreadEntrypoint(Player *currentPlayer)
 	//   playerPool to notify main of this change. The logic here will be similar, but
 	//   opposite, to what you did in the first TODO of this function.
 	///////////////////////////////////////////////////////////////////////////////////
+	if (currentPlayer->playerPool->muPlayercount.try_lock())
+	{
+		currentPlayer->playerPool->muPlayercount.lock();
+		currentPlayer->playerPool->count = currentPlayer->playerPool->count - 1;
+		currentPlayer->playerPool->muPlayercount.unlock();
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -625,8 +658,8 @@ void PrintResults(const Player *perPlayerData, int totalPlayerCount, const Game 
 int main(int argc, char **argv)
 {
 	ENABLE_LEAK_DETECTION();
-
-
+	//Conditional variable associeated with muPlayer
+	std::condition_variable detachedThreadCV;
 	// Total number of games we're going to be playing.
 	int totalGameCount;	
 	// Total number of players that will be playing.
@@ -682,6 +715,10 @@ int main(int argc, char **argv)
 	// TODO:: Initialize your data in the pool of players
 	///////////////////////////////////////////////////////////////////////////////////
 
+	poolOfPlayers.count = 0; //count of thread(player
+	poolOfPlayers.startingGun = 0;
+
+
 
 	// Initialize each game
 	for (int i = 0; i < totalGameCount; i++) 
@@ -707,24 +744,39 @@ int main(int argc, char **argv)
 		perPlayerData[i].playerPool = &poolOfPlayers;
 		perPlayerData[i].type = PlayerType::None;
 		perPlayerData[i].myRand.Init(0, INT_MAX);
+		std::thread pWorker(PlayerThreadEntrypoint, &perPlayerData[i]);
+
+		pWorker.detach();
 	}
 
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Start the player threads. The player threads should begin executing in
 	//   the PlayerThreadEntrypoint function. Make sure to detach the threads.
 	///////////////////////////////////////////////////////////////////////////////////
+	
+	//thread is detached when player created
 
+	
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Wait for all players to be ready 
 	///////////////////////////////////////////////////////////////////////////////////
-
+	std::unique_lock<std::mutex> lock(poolOfPlayers.muPlayercount);
+	detachedThreadCV.wait(lock, [&]() {return poolOfPlayers.count == totalPlayerCount; });
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Notify all waiting threads that they can start playing.
 	///////////////////////////////////////////////////////////////////////////////////
-
+	if (poolOfPlayers.muStartingGun.try_lock())
+	{
+		poolOfPlayers.muStartingGun.lock();
+		poolOfPlayers.startingGun = 1;
+		poolOfPlayers.muStartingGun.unlock();
+	}
+	poolOfPlayers.cvStartingGun.notify_all();
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Wait for all detached player threads to complete.
 	///////////////////////////////////////////////////////////////////////////////////
+	std::unique_lock<std::mutex> ENDlock(poolOfPlayers.muPlayercount);
+	detachedThreadCV.wait(ENDlock, [&]() {return poolOfPlayers.count == 0; });
 
 	PrintResults(perPlayerData, totalPlayerCount, perGameData, totalGameCount);
 
