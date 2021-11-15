@@ -488,6 +488,7 @@ void JoinGame(Player *currentPlayer, Game *currentGame)
 		// TODO:: We're the only player in the game right now so we need to wait for the 
 		//   other player to join the game and play it's turn.
 		///////////////////////////////////////////////////////////////////////////////////
+		currentGame->gameCondition.wait(gameUniqueLock, [&]() {return currentGame->playerX != -1; });
 	}
 	else 
 	{
@@ -775,8 +776,8 @@ int main(int argc, char **argv)
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Wait for all detached player threads to complete.
 	///////////////////////////////////////////////////////////////////////////////////
-	std::unique_lock<std::mutex> ENDlock(poolOfPlayers.muPlayercount);
-	detachedThreadCV.wait(ENDlock, [&]() {return poolOfPlayers.count == 0; });
+	
+	detachedThreadCV.wait(lock, [&]() {return poolOfPlayers.count == 0; });
 
 	PrintResults(perPlayerData, totalPlayerCount, perGameData, totalGameCount);
 
