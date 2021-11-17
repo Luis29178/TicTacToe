@@ -1,11 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // TODO:: #include any needed files
 ///////////////////////////////////////////////////////////////////////////////////
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <random>
-
-
-
+#include <stdio.h>
+#include <stdarg.h>
 
 // Include file and line numbers for memory leak detection for visual studio in debug mode
 #if defined _MSC_VER && defined _DEBUG
@@ -163,8 +166,8 @@ struct PlayerPool
 	std::condition_variable cvPlayercount;
 	std::mutex muStartingGun;
 	std::condition_variable cvStartingGun;
-	std::atomic<int> count;
-	std::atomic<int> startingGun;
+	int count;
+	bool startingGun;
 	
 };
 
@@ -201,6 +204,17 @@ void Pause()
 ///////////////////////////////////////////////////////////////////////////////////
 void LogSync(LogSyncOperation operationToPerform)
 {
+	static std::mutex muLogSynk;
+	if (operationToPerform == LogSyncOperation::Lock)
+	{
+		
+			muLogSynk.try_lock();
+		
+	}
+	if (operationToPerform == LogSyncOperation::Lock)
+	{
+		muLogSynk.unlock();
+	}
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Implement 'LogSync' logic. Init and Release may or may not be required
 	//   depending on your implementation. 
@@ -237,12 +251,16 @@ void LogSync(LogSyncOperation operationToPerform)
 int Log(const char *format, ...)
 {
 	int result = 0;
-
+	LogSync(LogSyncOperation::Lock);
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Implement 'Log' logic. This function should behave exactly like printf,
 	//   but all console output will be synchronized via LogSync.
 	///////////////////////////////////////////////////////////////////////////////////
-
+	va_list args;
+	va_start(args, format);
+	vprintf(format, args);
+	va_end(args);
+	LogSync(LogSyncOperation::Unlock);
 	return result;
 }
 
@@ -263,22 +281,24 @@ void PrintGameBoard(const Game *currentGame)
 	// This portion of the lab requires you to write the LogSync and Log functions. Get
 	//   your threads running and shutting down before attempting these functions.
 	///////////////////////////////////////////////////////////////////////////////////
-	for (int row = 0; row < 3; row++)
-	{
-		for(int col = 0; col < 3; col++)
+
+		for (int row = 0; row < 3; row++)
 		{
-			if (currentGame->gameBoard[row][col] == PlayerType::None)
+			for (int col = 0; col < 3; col++)
 			{
-				printf("[ ]");
+				if (currentGame->gameBoard[row][col] == PlayerType::None)
+				{
+					printf("[ ]");
+				}
+				else
+				{
+					printf("[%c]", (currentGame->gameBoard[row][col] == PlayerType::X) ? 'X' : 'O');
+				}
+				std::this_thread::yield();
 			}
-			else
-			{
-				printf("[%c]", (currentGame->gameBoard[row][col] == PlayerType::X) ? 'X' : 'O');
-			}
-			std::this_thread::yield();
+			printf("\n");
 		}
-		printf("\n");
-	}
+	
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -412,12 +432,13 @@ void PlayGame(Player *currentPlayer, Game *currentGame)
 			Pause();
 			exit(1);
 		}
-
+		
 		currentGame->currentTurn = (currentPlayer->type == PlayerType::X) ? PlayerType::O : PlayerType::X;
 
 		// Make a move on the game board. The result of this function will determine the current state of the board.
 		currentGame->currentGameState = MakeAMove(currentPlayer, currentGame);
 		PrintGameBoard(currentGame);
+		
 
 		switch (currentGame->currentGameState)
 		{
@@ -426,18 +447,24 @@ void PlayGame(Player *currentPlayer, Game *currentGame)
 				// TODO:: The game is not over yet. We need to notify the other player that it's
 				//   their turn and then we must wait until they tell us it's our turn.
 				///////////////////////////////////////////////////////////////////////////////////
+				currentGame->gameCondition.notify_all();
+
+				currentGame->gameCondition.wait(*currentGame->gameUniqueLock, [&]() {return currentGame->currentTurn == currentPlayer->type; });
+
 				continue;
 			case GameState::Won:
 				///////////////////////////////////////////////////////////////////////////////////
 				// TODO:: We have won the game, we must wake up the other player so they can break
 				//   out of the PlayGame function.
 				///////////////////////////////////////////////////////////////////////////////////
+				currentGame->gameCondition.notify_all();
 				return;
 			case GameState::Draw:
 				///////////////////////////////////////////////////////////////////////////////////
 				// TODO:: The game ended in a tie, we must wake up the other player so they can break
 				//   out of the PlayGame function
 				///////////////////////////////////////////////////////////////////////////////////
+				currentGame->gameCondition.notify_all();
 				return;
 		}
 	}
@@ -473,17 +500,18 @@ void PlayGame(Player *currentPlayer, Game *currentGame)
 ///////////////////////////////////////////////////////////////////////////////////
 void JoinGame(Player *currentPlayer, Game *currentGame)
 {
+
 	// The player thread has joined a game and will begin playing it now.
 	std::unique_lock<std::mutex> gameUniqueLock(currentGame->gameMutex);
 	currentGame->gameUniqueLock = &gameUniqueLock;
 
 	if (currentGame->playerO == -1)
 	{
+
 		printf("Player %d joining game %d as 'O'\n", currentPlayer->id, currentGame->gameNumber);
 
 		currentGame->playerO = currentPlayer->id;
 		currentPlayer->type = PlayerType::O;
-
 		///////////////////////////////////////////////////////////////////////////////////
 		// TODO:: We're the only player in the game right now so we need to wait for the 
 		//   other player to join the game and play it's turn.
@@ -496,8 +524,9 @@ void JoinGame(Player *currentPlayer, Game *currentGame)
 
 		currentGame->playerX = currentPlayer->id;
 		currentPlayer->type = PlayerType::X;
-	}
 
+	}
+	
 	PlayGame(currentPlayer, currentGame);
 	currentGame->gameUniqueLock = nullptr;
 	currentPlayer->gamesPlayed++;
@@ -569,19 +598,20 @@ void PlayerThreadEntrypoint(Player *currentPlayer)
 	//     then you probably let main 'fire' the gun (via notify) before you were waiting on it.
 	//
 	///////////////////////////////////////////////////////////////////////////////////
-	if (currentPlayer->playerPool->muPlayercount.try_lock())
-	{
+	
 		currentPlayer->playerPool->muPlayercount.lock();
-		currentPlayer->playerPool->count = currentPlayer->playerPool->count + 1;
+		currentPlayer->playerPool->count++;
+		currentPlayer->playerPool->cvPlayercount.notify_all();
 		currentPlayer->playerPool->muPlayercount.unlock();
-	}
+	
+	
 
 
 
 
 	std::unique_lock<std::mutex> StartLock(currentPlayer->playerPool->muStartingGun);
-	currentPlayer->playerPool->cvStartingGun.wait(StartLock, [&]() {return currentPlayer->playerPool->startingGun == 1; });
-
+	currentPlayer->playerPool->cvStartingGun.wait(StartLock, [&]() {return currentPlayer->playerPool->startingGun == true; });
+	StartLock.unlock();
 	// Attempt to play each game, all of the game logic will occur in this function
 	printf("Player %d running\n", currentPlayer->id);
 	TryToPlayEachGame(currentPlayer);
@@ -591,12 +621,12 @@ void PlayerThreadEntrypoint(Player *currentPlayer)
 	//   playerPool to notify main of this change. The logic here will be similar, but
 	//   opposite, to what you did in the first TODO of this function.
 	///////////////////////////////////////////////////////////////////////////////////
-	if (currentPlayer->playerPool->muPlayercount.try_lock())
-	{
-		currentPlayer->playerPool->muPlayercount.lock();
-		currentPlayer->playerPool->count = currentPlayer->playerPool->count - 1;
-		currentPlayer->playerPool->muPlayercount.unlock();
-	}
+
+	currentPlayer->playerPool->muPlayercount.lock();
+	currentPlayer->playerPool->count++;
+	currentPlayer->playerPool->cvPlayercount.notify_all();
+	currentPlayer->playerPool->muPlayercount.unlock();
+	
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -659,8 +689,7 @@ void PrintResults(const Player *perPlayerData, int totalPlayerCount, const Game 
 int main(int argc, char **argv)
 {
 	ENABLE_LEAK_DETECTION();
-	//Conditional variable associeated with muPlayer
-	std::condition_variable detachedThreadCV;
+
 	// Total number of games we're going to be playing.
 	int totalGameCount;	
 	// Total number of players that will be playing.
@@ -715,9 +744,9 @@ int main(int argc, char **argv)
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Initialize your data in the pool of players
 	///////////////////////////////////////////////////////////////////////////////////
-
-	poolOfPlayers.count = 0; //count of thread(player
-	poolOfPlayers.startingGun = 0;
+	
+	poolOfPlayers.count = 0;
+	poolOfPlayers.startingGun = false;
 
 
 
@@ -745,39 +774,37 @@ int main(int argc, char **argv)
 		perPlayerData[i].playerPool = &poolOfPlayers;
 		perPlayerData[i].type = PlayerType::None;
 		perPlayerData[i].myRand.Init(0, INT_MAX);
-		std::thread pWorker(PlayerThreadEntrypoint, &perPlayerData[i]);
-
-		pWorker.detach();
+		std::thread player(PlayerThreadEntrypoint, &perPlayerData[i]);
+		player.detach();
 	}
 
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Start the player threads. The player threads should begin executing in
 	//   the PlayerThreadEntrypoint function. Make sure to detach the threads.
 	///////////////////////////////////////////////////////////////////////////////////
-	
-	//thread is detached when player created
 
+	
+
+	
 	
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Wait for all players to be ready 
 	///////////////////////////////////////////////////////////////////////////////////
 	std::unique_lock<std::mutex> lock(poolOfPlayers.muPlayercount);
-	detachedThreadCV.wait(lock, [&]() {return poolOfPlayers.count == totalPlayerCount; });
+	poolOfPlayers.cvPlayercount.wait(lock, [&]() { return poolOfPlayers.count == totalPlayerCount; });
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Notify all waiting threads that they can start playing.
 	///////////////////////////////////////////////////////////////////////////////////
-	if (poolOfPlayers.muStartingGun.try_lock())
-	{
-		poolOfPlayers.muStartingGun.lock();
-		poolOfPlayers.startingGun = 1;
-		poolOfPlayers.muStartingGun.unlock();
-	}
+	poolOfPlayers.muStartingGun.lock();
+	poolOfPlayers.startingGun = true;
 	poolOfPlayers.cvStartingGun.notify_all();
+	poolOfPlayers.muStartingGun.unlock();
+
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Wait for all detached player threads to complete.
 	///////////////////////////////////////////////////////////////////////////////////
 	
-	detachedThreadCV.wait(lock, [&]() {return poolOfPlayers.count == 0; });
+	poolOfPlayers.cvPlayercount.wait(lock, [&]() {return poolOfPlayers.count == (totalPlayerCount*2); });
 
 	PrintResults(perPlayerData, totalPlayerCount, perGameData, totalGameCount);
 
