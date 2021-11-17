@@ -508,7 +508,7 @@ void JoinGame(Player *currentPlayer, Game *currentGame)
 	if (currentGame->playerO == -1)
 	{
 
-		printf("Player %d joining game %d as 'O'\n", currentPlayer->id, currentGame->gameNumber);
+		Log("Player %d joining game %d as 'O'\n", currentPlayer->id, currentGame->gameNumber);
 
 		currentGame->playerO = currentPlayer->id;
 		currentPlayer->type = PlayerType::O;
@@ -520,7 +520,7 @@ void JoinGame(Player *currentPlayer, Game *currentGame)
 	}
 	else 
 	{
-		printf("Player %d joining game %d as 'X'\n", currentPlayer->id, currentGame->gameNumber);
+		Log("Player %d joining game %d as 'X'\n", currentPlayer->id, currentGame->gameNumber);
 
 		currentGame->playerX = currentPlayer->id;
 		currentPlayer->type = PlayerType::X;
@@ -542,7 +542,7 @@ void JoinGame(Player *currentPlayer, Game *currentGame)
 ///////////////////////////////////////////////////////////////////////////////////
 void TryToPlayEachGame(Player *currentPlayer)
 {
-	printf("Player %d starting to play games...\n", currentPlayer->id);
+	Log("Player %d starting to play games...\n", currentPlayer->id);
 
 	Game *listOfGames = currentPlayer->gamePool->perGameData;
 	int totalGameCount = currentPlayer->gamePool->totalGameCount;
@@ -578,7 +578,7 @@ void TryToPlayEachGame(Player *currentPlayer)
 ///////////////////////////////////////////////////////////////////////////////////
 void PlayerThreadEntrypoint(Player *currentPlayer)
 {
-	printf("Player %d waiting on starting gun\n", currentPlayer->id);
+	Log("Player %d waiting on starting gun\n", currentPlayer->id);
 	
 	///////////////////////////////////////////////////////////////////////////////////
 	// TODO:: Let main know there's one more player thread running then wait for a
@@ -613,7 +613,7 @@ void PlayerThreadEntrypoint(Player *currentPlayer)
 	currentPlayer->playerPool->cvStartingGun.wait(StartLock, [&]() {return currentPlayer->playerPool->startingGun == true; });
 	StartLock.unlock();
 	// Attempt to play each game, all of the game logic will occur in this function
-	printf("Player %d running\n", currentPlayer->id);
+	Log("Player %d running\n", currentPlayer->id);
 	TryToPlayEachGame(currentPlayer);
 
 	///////////////////////////////////////////////////////////////////////////////////
@@ -646,10 +646,10 @@ void PrintResults(const Player *perPlayerData, int totalPlayerCount, const Game 
 	int totalPlayerLoses = 0;
 	int totalPlayerTies = 0;
 
-	printf("********* Player Results **********\n");
+	Log("********* Player Results **********\n");
 	for (int i = 0; i < totalPlayerCount; i++) 
 	{
-		printf("Player %d, Played %d game(s), Won %d, Lost %d, Draw %d\n",
+		Log("Player %d, Played %d game(s), Won %d, Lost %d, Draw %d\n",
 			perPlayerData[i].id,
 			perPlayerData[i].gamesPlayed,
 			perPlayerData[i].winCount,
@@ -662,12 +662,12 @@ void PrintResults(const Player *perPlayerData, int totalPlayerCount, const Game 
 		totalPlayerTies += perPlayerData[i].drawCount;
 	}
 
-	printf("Total Players %d, Wins %d, Losses %d, Draws %d\n\n\n", totalPlayerCount, totalPlayerWins, totalPlayerLoses, (totalPlayerTies / 2));
+	Log("Total Players %d, Wins %d, Losses %d, Draws %d\n\n\n", totalPlayerCount, totalPlayerWins, totalPlayerLoses, (totalPlayerTies / 2));
 
-	printf("********* Game Results **********\n");
+	Log("********* Game Results **********\n");
 	for (int i = 0; i < totalGameCount; i++)
 	{
-		printf("Game %d - 'X' player %d, 'O' player %d, game result %s\n", 
+		Log("Game %d - 'X' player %d, 'O' player %d, game result %s\n",
 			perGameData[i].gameNumber,
 			perGameData[i].playerX,
 			perGameData[i].playerO,
@@ -683,7 +683,7 @@ void PrintResults(const Player *perPlayerData, int totalPlayerCount, const Game 
 			totalGamesTied++;
 		}
 	}
-	printf("Total Games = %d, %d Games Won, %d Games were a Draw\n\n\n", totalGameCount, totalGamesWon, totalGamesTied);
+	Log("Total Games = %d, %d Games Won, %d Games were a Draw\n\n\n", totalGameCount, totalGamesWon, totalGamesTied);
 }
 
 int main(int argc, char **argv)
@@ -729,7 +729,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	printf("%s starting %d player(s) for %d game(s)\n", argv[0], totalPlayerCount, totalGameCount);
+	Log("%s starting %d player(s) for %d game(s)\n", argv[0], totalPlayerCount, totalGameCount);
 
 	// Allocate and array of players
 	perPlayerData = new Player[totalPlayerCount];
